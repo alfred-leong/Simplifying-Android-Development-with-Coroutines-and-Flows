@@ -658,3 +658,90 @@ class SensorActivity: AppCompatActivity() {
 }
 ```
 The `delay` suspending function will check whether the coroutine job is cancelled and will throw `CancellationException` if it is making your coroutine cancellable.
+
+### Managing coroutine timeouts
+Use `withTimeout` to set a timeout for the coroutine. If the timeout is exceeded, it will throw `TimeOutCancellationException`
+```
+class MovieViewModel: ViewModel() {
+    init {
+        viewModelScope.launch {
+            val job = launch {
+                withTimeout(5000) {
+                    fetchMovies()
+                }
+            }
+        }
+    }
+}
+```
+
+Use `withTimeoutOrNull` which is similar, but will return null if the timeout was exceeded.
+```
+class MovieViewModel: ViewModel() {
+    init {
+        viewModelScope.launch {
+            val job = async {
+                fetchMovies()
+            }
+            val movies = withTimeoutOrNull(5000) {
+                job.await()
+            }
+        }
+    }
+}
+```
+
+### Catching exceptions in coroutines
+Use try-catch 
+* If using `launch` coroutine builder, try the suspending function, and catch the exception
+* If using `async` coroutine builder, try `job.await()` and catch the exception
+
+If the exception of the coroutine is a subclass of `CancellationException` ie. `TimeoutCancellationException`, the exception will not be transmitted to the parent
+
+When handling coroutine exceptions, you can use a single place to handle these exceptions with `CoroutineExceptionHandler`. It is a coroutine context element that you can add to your coroutine to handle uncaught exceptions
+```
+class MovieViewModel: ViewModel() {
+    private val exceptionHandler = CoroutineExceptionHandler { _, exception -> 
+        Log.e("MovieViewModel", exception.message.toString())
+    }
+    private val scope = CoroutineScope(exceptionHandler)
+    ...
+}
+```
+
+## Chapter 4: Testing Kotlin Coroutines
+### Setting up an Android project for testing coroutines
+Frameworks needed:
+* JUnit 4 - unit testing framework for Java
+* Mockito - most popular Java mocking library to create mock objects for tests (can also use Mockito-Kotlin which contains helper functions to make your code more Kotlin-like)
+* androidx.arch.core:core-testing - to test Jetpack components such as LiveData
+* kotlinx-coroutines.test - contains utility classes to make testing coroutines easier and more efficient
+
+### Unit testing suspending functions
+Use the `runBlocking` coroutine builder and call the suspending function from there
+For example, if you have a MovieRepository class, which has a suspending function called fetchMovies:
+```
+class MovieRepository (private val movieService: MovieService) {
+    private val movieLiveData = MutableLiveData<List<Movie>>()
+    fun fetchMovies() {
+        val movies = movieService.getMovies()
+        movieLiveData.postValue(movies.result)
+    }
+}
+```
+To create a test for fetchMovies, you can use `runBlocking` like this:
+```
+class MovieRepositoryTest {
+    @Test
+    fun fetchMovies() {
+        runBlocking {
+            val movieLiveData = movieRepository.fetchMovies()
+            assertEquals(movieLiveData.value, movies)
+        }
+    }
+}
+```
+
+`runBlocking` might be slow due to delays in the code. Can use `runTest` coroutine builder instead, which is essentially the same except it runs the suspending function immediately and without delays
+
+### Testing coroutines
