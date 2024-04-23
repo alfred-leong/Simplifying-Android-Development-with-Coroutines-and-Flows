@@ -4,6 +4,7 @@ import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.widget.Button
 import android.widget.TextView
+import com.google.android.material.snackbar.Snackbar
 import kotlinx.coroutines.*
 
 class MainActivity : AppCompatActivity() {
@@ -19,9 +20,13 @@ class MainActivity : AppCompatActivity() {
         textView = findViewById(R.id.textView)
 
         job = scope.launch {
-            while (count > 0) {
-                delay(100)
-                countdown()
+            try {
+                while (count > 0) {
+                    delay(100)
+                    countdown()
+                }
+            } catch (exception: Exception) {
+                Snackbar.make(textView, exception.message.toString(), Snackbar.LENGTH_LONG).show()
             }
         }
 
@@ -34,5 +39,6 @@ class MainActivity : AppCompatActivity() {
     private fun countdown() {
         count--
         textView.text = count.toString()
+        if ((0..9). random()==0) throw Exception("An error occurred")
     }
 }
