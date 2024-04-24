@@ -813,6 +813,325 @@ fun loading() {
 ```
 
 ## Chapter 5: Using Kotlin Flows
-Kotlin Flow is a new asynchronous stream library built on top of Kotlin coroutines. A flow can emit multiple values over a length of time instead of just a single value. You can use Flows  
-to do this
+Kotlin Flow is a new asynchronous stream library built on top of Kotlin coroutines. A flow can emit multiple values over a length of time instead of just a single value. You can use Flows for streams of data such as real-time location, sensor readings and live database values.
 
+### Using Flows in Android
+Flows emit multiple values of the same type one at a time ie. `Flow<String` is a flow that emits string values.
+For example, if your Android application uses a Data Access Object to display a list of movies, it might look like this:
+```
+@Dao
+interface MovieDao {
+    @Query("SELECT * FROM movies")
+    fun getMovies(): List<Movie>
+}
+```
+However, this only fetches the list of movies once, after calling `getMovies`. You may want the app to automatically update the list of movies whenever the movie database changes. To do so:
+```
+@Dao
+interface MovieDao {
+    @Query("SELECT * FROM movies")
+    fun getMovies(): Flow<List<Movie>>
+}
+```
+
+A flow will only start emitting values when you call the `collect` function. The `collect` function is a suspending function, so you should call it from a coroutine or another suspending function.
+```
+lifecycleScope.launch {
+    viewModel.fetchMovies().collect { movie -> 
+        Log.d("movies", "${movie.title}")
+    }
+}
+```
+
+The collection of the flow occurs in `CoroutineContext` of the parent coroutine. To change the `CoroutineContext` where the Flow is run, you can use the `flowOn()` function.
+```
+lifecycleScope.launch {
+    viewModel.fetchMovies().flowOn(Dispatchers.IO).collect { movie ->
+        Log.d("movies", "${movie.title}")
+    }
+}
+```
+`flowOn` will only change the preceding functions or operators and not the ones after you called it.
+
+You can collect Flow in the Fragment or Activity classes to display the data in the UI. If the UI goes to the background, your Flow will keep on collecting the data. To prevent memory leaks and avoid wasting resources, your app must not continue collecting the Flow.
+To safely collect flows in the Android UI layer, you would need to handle the lifecycle changes yourself. You can use `Lifecycle.repeatOnLifecycle` and `Flow.flowWithLifecycle`.
+`Lifecycle.repeatOnLifecycle(state, block)` suspends the parent coroutine until the lifecycle is destroyed and executes the suspending block of code when the lifecycle is at least in state you set. When the lifecycle moves out of the state, it will stop the Flow and restart it when the lifecycle moves back to the state.
+It is recommended to call it on the activity's `onCreate` or on the fragment's `onViewCreated` functions.
+```
+class MainActivity : AppCompatActivity() {
+    ...
+    override fun onCreate(savedInstanceState: Bundle?) {
+        ...
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.fetchMovies()
+                    .collect { movie -> 
+                        Log.d("movies, "${movie.title}")
+                    }
+            }
+        }
+    }
+}
+```
+You can also use `Lifecycle.repeatOnLifecycle` to collect more than one Flow by collecting them in separate `launch` coroutine builders ie.
+```
+class MainActivity : AppCompatActivity() {
+    ...
+    override fun onCreate(savedInstanceState: Bundle?) {
+        ...
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    viewModel.fetchMovies()
+                        .collect { movie -> 
+                            Log.d("movies, "${movie.title}")
+                        }
+                }
+                launch {
+                    viewModel.fetchTVShows()
+                        .collect { show -> 
+                            Log.d("tv shows, "${show.title}")
+                        }
+                }
+            }
+        }
+    }
+}
+```
+
+If you only have one Flow to collect, you can use `Flow.flowWithLifecycle`. This emits values from the upstream Flow when the lifecycle is at least in the state you set. It uses `Lifecycle.repeatOnLifecycle` internally.
+```
+class MainActivity : AppCompatActivity() {
+    ...
+    override fun onCreate(savedInstanceState: Bundle?) {
+        ...
+        lifecycleScope.launch {
+            viewModel.fetchMovies()
+                .flowWithLifecycle(lifecycle, Lifecycle.State.STARTED)
+                .collect { movie ->
+                    Log.d("movies", "${movie.title}")
+                }
+        }
+    }
+}
+```
+
+### Creating Flows with Flow builders
+Flow builders:
+* flow { }
+* flowOf()
+* asFlow()
+
+The `flow` builder function creates a new Flow from a suspendable lambda block. Inside the block, you can send values using the `emit` function.
+```
+class MovieViewModel : ViewModel() {
+    fun fetchMovieTitles(): Flow<String> = flow {
+        val movies = fetchMoviesFromNetwork()
+        movies.forEach { movie ->
+            emit(movie.title)
+        }
+    }
+    private fun fetchMoviesFromNetwork(): List<Movie> { ... }
+}
+```
+
+With the `flowOf` function, you can create a Flow that produces the specified value or vararg values.
+```
+class MovieViewModel : ViewModel() {
+    fun fetchTop3Titles(): Flow<List<Movie>> {
+        val movies = fetchMoviesFromNetwork().sortedBy { it.popularity }
+        return flowOf(movies[0].title, movies[1].title, movies[2].title)
+    }
+}
+```
+
+The `asFlow` extension function allows you to convert a type into a Flow. You can use this on sequences, arrays, ranges, collections and functional types.
+```
+class MovieViewModel : ViewModel() {
+    private fun fetchMovieIds(): Flow<Int> {
+        val movies: List<Movie> = fetchMoviesFromNetwork()
+        return movies.map { it.id }.asFlow()
+    }
+}
+```
+
+### Using operators with Flows
+Kotlin Flow has built-in operators that you can use with Flows. You can collect flows with terminal operators and transform Flows with Intermediate operators.
+
+#### Collecting Flows with terminal operators
+* toList - Collects Flow and converts it to list
+* toSet - converts to set
+* toCollection - converts to collection
+* count - returns number of elements in the Flow
+* first / firstOrNull - returns Flow's first element or throws Exception / null if empty
+* last/ lastOrNull - last element
+* single / singleOrNull - returns single element emitted or throws Exception / null if empty or more than one value
+* reduce - Applies a function to each item emitted, starting from the first element and returns the accumulated result
+* fold - Applies a function to each item emitted, started from the initial value set and returns the accumulated result
+
+```
+class MainActivity : AppCompatActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                val topMovie = viewModel.fetchMovies().firstOrNull()
+                displayMovie(topMovie)
+            }
+        }
+    }
+}
+```
+`firstOrNull` was used on the Flow to get the first item, or null if the Flow is empty.
+
+#### Transforming Flows with Intermediate operators
+Intermediate operators allow you to modify a Flow and return a new one. You can chain various operators and they will be applied sequentially. 
+* filter - Returns a Flow that selects only the values from the Flow that meet the condition
+* filterNot - Returns a Flow that selects only the values that do not meet the condition
+* filterNotNull - values that are not null
+* filterIsInstance - values that are instances of the type you specified
+* map - Returns a Flow that includes values from the Flow transformed with the operation you specified
+* mapNotNull - Like map but only includes values that are not null
+* withIndex - Returns a Flow that converts each value to an IndexedValue containing the index of the value and the value itself
+* onEach - Returns a Flow that performs the specified action on each value before they are emitted
+* runningReduce - Returns a Flow containing the accumulated values resulting from running the operation specified sequentially, starting with the first element
+* runningFold - Returns a Flow containing the accumulated values resulting from running the operation specified sequentially, starting with the initial value set
+* scan - Like runningFold
+* transform - Apply custom or complex operations, can emit values into the new Flow by calling the emit function with the value to send
+* drop - Returns a Flow that ignores the first x elements
+* dropWhile - ignores first elements that meet the condition specified
+* take - Returns a flow that contains the first x elements
+* takeWhile - includes the first elements that meet the condition specified
+
+```
+class MovieViewModel : ViewModel() {
+    fun fetchTopMovies(): Flow<Movie> {
+        return fetchMoviesFlow().transform {
+            if (it.popularity > 0.5f) emit (it)
+        }
+    }
+}
+```
+
+### Buffering and combining flows
+Buffering allows Flow with long-running tasks to run independently and avoid race conditions. Combining allows you to join different sources of Flows before processing or displaying them on the screen.
+
+#### Buffering Kotlin Flows
+Buffering allows you to run data emission in parallel to collection. Emitting and collecting data with Flow run sequentially. When a new value is emitted, it will be collected. Emission of a new value can only happen once the previous data has been collected.
+With buffering, you can make a Flow's emission and collection of data run in parallel. There are three operators to use to buffer Flows:
+* buffer
+* conflate
+* collectLatest
+
+`buffer()` allows the Flow to emit values while the data is still being collected. The emission and collection of data are run in separate coroutines, so it runs in parallel.
+```
+class MainActivity : AppCompatActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.fetchMovies()
+                    .buffer()
+                    .collect { movie ->
+                        processMovie(movie)
+                    }
+            }
+        }
+    }
+}
+```
+The `buffer` operator was added before calling `collect`. If the `processMovie(movie)` function in the collection takes longer, the Flow will emit and buffer the values before they are collected and processed.
+
+`conflate` is similar to `buffer` except the collector will only process the latest value emitted after the previous value has been processed. It will ignore theother values previously emitted.
+```
+class MainActivity : AppCompatActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.getTopMovie()
+                    .conflate()
+                    .collect { movie ->
+                        processMovie(movie)
+                    }
+            }
+        }
+    }
+}
+```
+Adding the `conflate` operator will allow us to only process the latest value from the Flow and call `processMovie` on that value.
+
+`collectLatest(action)` is a terminal operator that will collect the Flow the same way as `collect`, but whenever a new value is emitted, it will restart the action and use this new value.
+```
+class MainActivity : AppCompatActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.getTopMovie()
+                    .collectLatest { movie ->
+                        processMovie(movie)
+                    }
+            }
+        }
+    }
+}
+```
+`collectLatest` was used instead of `collect` to collect the flow from `viewModel.getTopMovie()`. Whenever a new value is emitted by this Flow, it will restart and call displayMovie with the new value.
+
+#### Combining Flows
+If you have multiple flows and want to combine them into one, you can use the following operators:
+* zip
+* merge
+* combine
+
+`merge` is a top-level function that combines the elements from multiple Flows of the same type into one. 
+```
+class MainActivity : AppCompatActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                merge(viewModel.fetchMoviesFromDb(),
+                    viewModel.fetchMoviesFromNetwork())
+                    .collect { movie -> processMovie(movie) }
+            }
+        }
+    }
+}
+```
+`merge` was used to combine the Flows from `fetchMoviesFromDb()` and `fetchMoviesFromNetwork()` before they are collected.
+
+The `zip` operator pairs data from the first Flow to the second Flow into a new value using the function you specified. If one Flow has fewer values than the other, `zip` will end when the values of this flow have all been processed.
+```
+class MainActivity : AppCompatActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                val userFlow = viewModel.getUsers()
+                val taskFlow = viewModel.getTasks()
+                userFlow.zip(taskFlow) { user, task ->
+                    AssignedTask(user, task)
+                }.collect { assignedTask ->
+                    displayAssignedTask(assignedTask)
+                }
+            }
+        }
+    }
+}
+```
+
+`combine` pairs data from the first flow to the second flow like `zip` but uses the most recent value emitted by each flow. It will continue to run as long as a Flow emits a value.
+```
+class MainActivity : AppCompatActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                val yourMessage = viewModel.getLastMessageSent()
+                val friendMessage = viewModel.getLastMessageReceived()
+                yourMessage.combine(friendMessage) { yourMessage, friendMessage -> 
+                    Conversation(yourMessage, friendMessage)
+                }.collect { conversation -> displayConversation(conversation) }
+            }
+        }
+    }
+}
+```
+The `combine` function pairs the most recent value of yourMessage and friendMessage to create a Conversation object. Whenever a new value is emitted by either Flow, combine will pair the latest values and add that to the resulting Flow for collection.
+
+### Exploring StateFlow and SharedFlow
