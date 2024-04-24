@@ -745,3 +745,74 @@ class MovieRepositoryTest {
 `runBlocking` might be slow due to delays in the code. Can use `runTest` coroutine builder instead, which is essentially the same except it runs the suspending function immediately and without delays
 
 ### Testing coroutines
+For coroutines launched using `Dispatchers.Main`, your unit tests will fail with IllegalStateException because it uses `Looper.getMainLooper()` which is the application's main thread. The main looper is not available for local unit tests.
+To make your tests work, you must use `Dispatchers.setMain` extension function to change the main dispatcher.
+```
+@Before
+fun setUp() {
+    Dispatchers.setMain(UnconfinedTestDispatcher())
+}
+```
+This will change all subsequent uses of `Dispatchers.Main`. After the test, you must change the main dispatcher back with a call to `Dispatchers.resetMain()`
+```
+@After
+fun tearDown() {
+    Dispatchers.resetMain()
+}
+```
+
+You can make a custom JUnit rule to avoid copying and pasting this code in each test class. Ensure that this rule is in the root folder of your test source set.
+```
+@ExperimentalCoroutineApi
+class TestCoroutineRule(val dispatcher: TestDispatcher = UnconfinedTestDispatcher()):
+    TestWatcher() {
+        override fun starting(description: Description?) {
+            super.starting(description)
+            Dispatchers.setMain(dispatcher)
+        }
+        override fun finished(description: Description?) {
+            super.finished(description)
+            Dispatchers.resetMain()
+        }
+    }
+```
+You can then use this `TestCoroutineRule` in your test classes by adding the `@get:Rule` annotation.
+```
+@ExperimentalCoroutineApi
+class MovieRepositoryTest {
+    @get:Rule
+    var coroutineRule = TestCoroutineRule()
+    ...
+}
+```
+
+When testing coroutines, you must replace your coroutine dispatchers with a `TestDispatcher` for testing. Your code should have a way to change the dispatcher that will be used.
+There are two available implementations of `TestDispatcher` in the `kotlinx-coroutines-test` library:
+* StandardTestDispatcher - does not run coroutines automatically, giving you full control over execution order
+* UnconfinedTestDispatcher - runs coroutines automatically, offers no control over the order in which the coroutines are launched
+Both have constructor properties: scheduler for TestCoroutineScheduler, and name for identifying the dispatcher. If you do not specify the scheduler, TestDispatcher will create a TestCoroutineScheduler by default
+TestCoroutineScheduler of the StandardTestDispatcher controls the execution of the coroutine, and has three functions:
+* runCurrent() - Runs the tasks that are scheduled until the current virtual time
+* advanceUntilIdle() - Runs all pending tasks
+* advanceTimeBy(milliseconds) - Runs pending tasks until current virtual advances by the specified milliseconds
+
+The `runTest` coroutine builder creates a coroutine with a scope of `TestScope`, which has a `TestCoroutineScheduler(testScheduler)` to control the execution of tasks
+Using `runTest` with a `TestDispatcher` allows you to test cases when there are time delays in the coroutine and you want to test a line of code before moving on to the next ones.
+For example, if ViewModel has a `loading` Boolean variable that is `true` before a network operation and then reset to `false` afterwards, the test for the `loading` variable looks like this:
+```
+@Test
+fun loading() {
+    val dispatcher = StandardTestDispatcher()
+    runTest() {
+        val viewModel = MovieViewModel(dispatcher)
+        viewModel.fetchMovies()
+        dispatcher.scheduler.advanceUntiLIdle()
+        assertEquals(false, viewModel.loading.value)
+    }
+}
+```
+
+## Chapter 5: Using Kotlin Flows
+Kotlin Flow is a new asynchronous stream library built on top of Kotlin coroutines. A flow can emit multiple values over a length of time instead of just a single value. You can use Flows  
+to do this
+
