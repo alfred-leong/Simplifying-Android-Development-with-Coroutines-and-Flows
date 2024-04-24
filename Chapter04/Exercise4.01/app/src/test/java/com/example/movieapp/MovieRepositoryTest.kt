@@ -23,7 +23,6 @@ class MovieRepositoryTest {
     fun fetchMovies() {
         val movies = listOf(Movie(id = 3), Movie(id = 4))
         val response = MoviesResponse(1, movies)
-
         val movieService: MovieService = mock {
             onBlocking { getMovies(anyString()) } doReturn response
         }
@@ -39,7 +38,6 @@ class MovieRepositoryTest {
     @Test
     fun fetchMoviesWithError() {
         val exception = "Test Exception"
-
         val movieService: MovieService = mock {
             onBlocking { getMovies(anyString()) } doThrow RuntimeException(exception)
         }
@@ -47,10 +45,8 @@ class MovieRepositoryTest {
 
         runTest {
             movieRepository.fetchMovies()
-
             val movieLiveData = movieRepository.movies
             assertNull(movieLiveData.value)
-
             val errorLiveData = movieRepository.error
             assertNotNull(errorLiveData.value)
             assertTrue(errorLiveData.value.toString().contains(exception))

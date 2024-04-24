@@ -12,7 +12,7 @@ import org.junit.Test
 import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.mock
 
-@ExperimentalCoroutinesApi
+@OptIn(ExperimentalCoroutinesApi::class)
 class MovieViewModelTest {
     @get:Rule
     val rule = InstantTaskExecutorRule()
@@ -21,28 +21,22 @@ class MovieViewModelTest {
     fun fetchMovies() {
         val expectedMovies = MutableLiveData<List<Movie>>()
         expectedMovies.postValue(listOf(Movie(title = "Movie")))
-
         val movieRepository: MovieRepository = mock {
             onBlocking { movies } doReturn expectedMovies
         }
-
         val movieViewModel = MovieViewModel(movieRepository)
         assertEquals(expectedMovies.value, movieViewModel.movies.value)
     }
 
-    @Test
-    fun loading() {
+    @Test fun loading() {
         val movieRepository: MovieRepository = mock()
         val dispatcher = StandardTestDispatcher()
-
         runTest {
             val movieViewModel = MovieViewModel(movieRepository, dispatcher)
             movieViewModel.fetchMovies()
-
             assertTrue(movieViewModel.loading.value == true)
             dispatcher.scheduler.advanceUntilIdle()
             assertFalse(movieViewModel.loading.value == true)
         }
     }
-
 }
