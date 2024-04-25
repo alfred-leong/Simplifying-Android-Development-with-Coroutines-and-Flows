@@ -1135,3 +1135,148 @@ class MainActivity : AppCompatActivity() {
 The `combine` function pairs the most recent value of yourMessage and friendMessage to create a Conversation object. Whenever a new value is emitted by either Flow, combine will pair the latest values and add that to the resulting Flow for collection.
 
 ### Exploring StateFlow and SharedFlow
+A Flow is a cold stream of data. Flows only emit values when the values are collected. With SharedFlow and StateFlow hot streams, you can run and emit values the moment they are called and even when they have no listeners.
+
+A SharedFlow allows you to emit values to multiple listeners. SharedFlow can be used for one-time events. The tasks that will be done by the SharedFlow will only be run once and will be shared by the listeners.
+You can use MutableSharedFlow and then use the `emit` function to send values to all collectors.
+```
+class MovieViewModel: ViewModel() {
+    private val _message = MutableSharedFlow<String>()
+    val movies: SharedFlow<String> = _message.asSharedFlow()
+    
+    fun onError(): Flow<List<Movie>> {
+        _message.emit("An error was encountered")
+    }
+}
+```
+We used the `emit` function to send the error message to the Flow's listeners.
+
+StateFlow is SharedFlow, but it only emits the latest value to its listeners. StateFlow is initialised with a value (initial state) and keeps this state. Updating the value sends the new value to the Flow.
+In Android, StateFlow can be an alternative to LiveData. You can use StateFlow for ViewModel, and your activity or fragment can then collect the value.
+```
+class MovieViewModel: ViewModel() {
+    private val _movies = MutableStateFlow(emptyList<Movie>())
+    val movies: StateFlow<List<Movie>> = _movies
+    
+    fun fetchMovies(): Flow<List<Movie>> {
+        _movies.value = movieRepository.fetchMovies()
+    }
+}
+```
+The list of movies fetched from the repository will be set to `_movies`, which will also change StateFlow of `movies`. You can then collect StateFlow of `movies` in an activity or fragment:
+```
+class MainActivity : AppCompatActivity() {  
+    override fun onCreate(savedInstanceState: Bundle?) {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.movies.collect { movies ->
+                    displayMovies(movies)
+                }
+            }
+        }
+    }
+}
+```
+
+## Chapter 6: Handling Flow Cancellations and Exceptions
+### Cancelling Kotlin Flows
+Like coroutines, Flows can be cancelled manually or automatically. Flow also follows the cooperative cancellation of coroutines.
+Flows created using the `flow{}` builder are cancellable by default. Each `emit` call to send new values to the Flow also calls `ensureActive` internally. This checks whether the coroutine is still active, if not it will throw `CancellationException`.
+
+All other Flows, such as `asFlow` and `flowOf` builders are not cancellable by default, and we must handle the cancellation ourselves. There is a `cancellable()` operator we can use to make it cancellable. This will add an `ensureActive` call on each emission of a new value
+```
+class MovieViewModel : ViewModel() {
+    fun fetchMovies(): Flow<Movie> {
+        return movieRepository.fetchMovies.cancellable()
+    }
+}
+```
+
+### Retrying tasks with Flow
+When performing long-running tasks, such as a network call, sometimes it is necessary to try the call again. With Kotlin Flows, we have the `retry` and `retryWhen` operators that we can use to try Flows automatically.
+The `retry` operator allows you to set a `Long retries` as the maximum number of times the Flow will retry. You can also set a predicate condition, a code block that will retry the Flow when it returns true. The predicate has a `Throwable` parameter representing the exception that occurred and you can use that to check whether you want to do the retry ot not.
+```
+class MovieViewModel : ViewModel() {
+    fun favouriteMovie(id: Int) =
+        movieRepository.favouriteMovie(id).retry(3) { cause -> cause is IOException }
+}
+```
+If you do not pass a value for the entries, the default of `Long.MAX_VALUE` will be used. 
+
+With the `retryWhen` operator, we can also emit a value to the Flow, which we can use to represent the retry attempt or a value. We can then display this value on the screen or process it.
+```
+class MovieViewModel : ViewModel() {
+    fun getTopMovieTitle(): Flow<String> {
+        return movieRepository.getTopMovieTitle(id)
+            .retryWhen { cause, attempt ->
+                emit("Fetching title again...")
+                attempt < 3 && cause is IOException)
+            }
+    }
+}
+```
+
+### Catching exceptions in Flows
+Exceptions can happen in Flows during the collection of values or when using any operators on a Flow. We can handle using a try-catch block.
+We can also use the `catch` operator to emit a new value to represent the error or for use as a fallback value instead, such as an empty list.
+```
+lifecycleScope.launch {
+    repeatOnLifecycle(Lifecycle.State.STARTED) {
+        viewModel.getTopMovieTitle()
+            .catch { emit("No movie fetched") }
+            .collect { title -> displayTitle(title) }
+    }
+}
+```
+As the `catch` operator only handles exceptions in the upstream Flow, an exception that happens during the `collect{}` call won't be caught. You can move the collection code to an `onEach` operator, add the `catch` operator after it, and use `collect()` to start the collection.
+```
+lifecycleScope.launch {
+    repeatOnLifecycle(Lifecycle.State.STARTED) {
+        viewModel.fetchMovies()
+            .onEach { movie -> processMovie(movie) }
+            .catch { exception -> handleError(exception) }
+            .collect()
+    }
+}
+```
+
+### Handling Flow completion
+We can add code to perform additional tasks after our Flows have completed. A flow is completed after it is cancelled, or when the last element has been emitted.
+To add a listener in your Flow when it has completed, you can use the `onCompletion` operator and add the code block that will run when the Flow completes. A common usage is to hide the progress bar in your UI when the Flow has completed.
+```
+lifecycleScope.launch {
+    repeatOnLifeycle(Lifecycle.State.STARTED) [
+        viewModel.fetchMovies()
+            .onStart { progressBar.isVisible = true }
+            .onEach { movie -> processMovie(movie) }
+            .onCompletion { progressBar.isVisible = false }
+            .catch { exception -> handleError(exception) }
+            .collect()
+    }
+}
+```
+
+You can also emit values, such as initial and final values in `onStart` and `onCompletion`.
+```
+lifecycleScope.launch {
+    repeatOnLifecycle(Lifecycle.State.STARTED) {
+        viewModel.getTopMovieTitle()
+            .onStart { emit("Loading...") }
+            .catch { emit("No movie fetched") }
+            .collect { title -> displayTitle(title) }
+    }
+}
+```
+
+The `onCompletion` code block also has a nullable `Throwable` that corresponds to the exception thrown by the Flow. The exception will not handle by itself, so you will need to use `catch` or `try-catch`.
+```
+viewModel.getTopMovieTitle()
+    .onCompletion { cause ->
+        progressBar.isVisible = false
+        if (cause != null) displayError(cause)
+    }
+    .catch { emit("No movie fetched") }
+    .collect { title -> displayTitle(title) }
+```
+
+## Testing Kotlin Flows
