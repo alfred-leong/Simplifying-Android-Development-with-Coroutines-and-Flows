@@ -1280,3 +1280,7 @@ viewModel.getTopMovieTitle()
 ```
 
 ## Testing Kotlin Flows
+To test code that collects a Flow, you can use a mock object that can return values which you can do assertion checks. For example, if your `ViewModel` listens to the Flow from a repository, you can create a custom `Repository` class that emits a Flow with a pre-defined set of values for easier testing.
+You can also test a Flow by collecting it to another object. You can do that by converting the Flow to a list with `toList()` or to a set with `toSet()`. Then, you can check the values returned with the expected values.
+To test error handling, you can mock your test objects to throw an exception. You can then check the exception thrown or the code that handles it.
+We can also test Flow retries by mocking our class to return a specific exception that would trigger a retry. For retries that still fail afterward, you can check the exception or the exception handling. To test retries that succeed, you can mock your class to either throw an exception or return a Flow that you can compare with the expected values.
